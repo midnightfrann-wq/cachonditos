@@ -12,11 +12,12 @@ SEARCH_OPTS = {
     "quiet": True,
     "no_warnings": True,
     "extract_flat": True,
+    "extractor_args": {"youtubetab": {"skip": ["authcheck"]}},
 }
 
 def build_download_opts(output_path: str) -> dict:
     return {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_path,
         "postprocessors": [
             {
@@ -27,18 +28,12 @@ def build_download_opts(output_path: str) -> dict:
         ],
         "quiet": True,
         "no_warnings": True,
+        "concurrent_fragment_downloads": 4,
     }
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "🎵 *Bot de Música*\n\n"
-        "Envíame el nombre de un artista o canción y te buscaré "
-        "los primeros 5 resultados en YouTube, los convertiré a MP3 "
-        "y te los enviaré directamente aquí.\n\n"
-        "Ejemplo: _Bad Bunny_ o _Bohemian Rhapsody_",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text("🎵 Envíame el nombre de una canción o artista.")
 
 
 async def search_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -46,68 +41,47 @@ async def search_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not query:
         return
 
-    status_msg = await update.message.reply_text(f"🔍 Buscando: *{query}*...", parse_mode="Markdown")
-
     loop = asyncio.get_event_loop()
 
     try:
         entries = await loop.run_in_executor(None, _search_youtube, query)
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Error al buscar: {e}")
+    except Exception:
         return
 
     if not entries:
-        await status_msg.edit_text("❌ No se encontraron resultados.")
         return
-
-    await status_msg.edit_text(
-        f"✅ Encontré *{len(entries)}* resultado(s). Descargando...",
-        parse_mode="Markdown",
-    )
 
     tmpdir = tempfile.mkdtemp()
     try:
-        for i, entry in enumerate(entries, 1):
-            video_id = entry.get("id", "")
-            title = entry.get("title") or f"Pista {i}"
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            duration = entry.get("duration")
-            duration_str = f" ({int(duration // 60)}:{int(duration % 60):02d})" if duration else ""
+        tasks = [
+            loop.run_in_executor(None, _download_mp3,
+                                 f"https://www.youtube.com/watch?v={e.get('id', '')}",
+                                 os.path.join(tmpdir, f"track_{i}.%(ext)s"),
+                                 os.path.join(tmpdir, f"track_{i}.mp3"))
+            for i, e in enumerate(entries, 1)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            await update.message.reply_text(
-                f"⬇️ *({i}/{len(entries)})* {title}{duration_str}",
-                parse_mode="Markdown",
-            )
-
-            output_template = os.path.join(tmpdir, f"track_{i}.%(ext)s")
+        for i, (entry, result) in enumerate(zip(entries, results), 1):
+            if isinstance(result, Exception):
+                continue
             mp3_path = os.path.join(tmpdir, f"track_{i}.mp3")
-
+            if not os.path.exists(mp3_path):
+                continue
             try:
-                await loop.run_in_executor(
-                    None, _download_mp3, video_url, output_template
-                )
-
-                if not os.path.exists(mp3_path):
-                    raise FileNotFoundError("Archivo MP3 no generado")
-
-                with open(mp3_path, "rb") as audio_file:
+                with open(mp3_path, "rb") as f:
                     await update.message.reply_audio(
-                        audio=audio_file,
-                        title=title,
-                        performer="YouTube",
+                        audio=f,
+                        title=entry.get("title", f"Track {i}"),
+                        performer=entry.get("uploader", ""),
                         read_timeout=120,
                         write_timeout=120,
                     )
-
-                os.remove(mp3_path)
-
-            except Exception as e:
-                await update.message.reply_text(f"❌ No se pudo descargar *{title}*: {e}", parse_mode="Markdown")
-
+            finally:
+                if os.path.exists(mp3_path):
+                    os.remove(mp3_path)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-
-    await update.message.reply_text("✅ ¡Listo! Todos los MP3 han sido enviados.")
 
 
 def _search_youtube(query: str) -> list:
@@ -116,7 +90,7 @@ def _search_youtube(query: str) -> list:
         return info.get("entries", []) if info else []
 
 
-def _download_mp3(url: str, output_template: str) -> None:
+def _download_mp3(url: str, output_template: str, mp3_path: str) -> None:
     opts = build_download_opts(output_template)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
@@ -126,7 +100,7 @@ def main() -> None:
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_send))
-    print("Bot iniciado. Esperando mensajes...")
+    print("Bot iniciado.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
