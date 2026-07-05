@@ -201,6 +201,11 @@ async def lifespan(app: FastAPI):
 web = FastAPI(lifespan=lifespan)
 
 
+@web.head("/")
+async def head_index():
+    return Response(status_code=200)
+
+
 @web.get("/", response_class=HTMLResponse)
 async def index():
     return """
