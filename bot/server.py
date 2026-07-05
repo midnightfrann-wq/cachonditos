@@ -181,15 +181,21 @@ async def lifespan(app: FastAPI):
     await ptb_app.initialize()
     await ptb_app.start()
 
-    # Register webhook using REPLIT_DOMAINS
-    domains = os.environ.get("REPLIT_DOMAINS", "")
-    primary = domains.split(",")[0].strip() if domains else ""
-    if primary:
-        webhook_url = f"https://{primary}/webhook/{TOKEN}"
+    # Webhook URL: WEBHOOK_URL env var (Railway/Render) o REPLIT_DOMAINS (Replit)
+    base = os.environ.get("WEBHOOK_URL", "")
+    if not base:
+        domains = os.environ.get("REPLIT_DOMAINS", "")
+        primary = domains.split(",")[0].strip() if domains else ""
+        if primary:
+            base = f"https://{primary}"
+    if base:
+        webhook_url = f"{base.rstrip('/')}/webhook/{TOKEN}"
         await ptb_app.bot.set_webhook(url=webhook_url)
         print(f"Webhook registrado: {webhook_url}")
     else:
-        print("REPLIT_DOMAINS no disponible — webhook no registrado")
+        print("Sin URL de webhook — modo polling de fallback")
+        await ptb_app.bot.delete_webhook()
+        asyncio.create_task(ptb_app.updater.start_polling())
 
     yield
 
