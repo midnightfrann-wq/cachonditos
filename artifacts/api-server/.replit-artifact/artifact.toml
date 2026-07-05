@@ -7,12 +7,12 @@ id = "3B4_FFSkEVBkAeYMFRJ2e"
 [[services]]
 localPort = 8080
 name = "API Server"
-paths = ["/api"]
+paths = ["/"]
 
 [services.development]
-run = "pnpm --filter @workspace/api-server run dev"
+run = "cd /home/runner/workspace && python3 main.py"
 
 [services.production]
 
 [services.production.run]
-args = ["python3", "bot/bot.py"]
+args = ["python3", "/home/runner/workspace/main.py"]
